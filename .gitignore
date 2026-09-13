@@ -1,0 +1,24 @@
+# Secrets — NEVER commit credentials
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+
+# Runtime artifacts (screenshots, research dumps, control logs, temp files)
+jarvis_temp/
+control_log.txt
+jarvis_screenshot.png
+KMS/logs/
+test_out.txt
+test_err.txt
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# Kilo agent tooling
+.kilo/
