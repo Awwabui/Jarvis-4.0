@@ -1,3 +1,23 @@
+# ============================================================================
+# agent.py — Jarvis v4.0 PRO
+#
+# Design rules:
+#  1. FULL Gemini intelligence by default — thinking ON, model defaults.
+#     Every knob only changes when YOU set it in .env (no hardcoding).
+#  2. Jarvis NEVER acts by itself: no startup greeting, no auto browser
+#     launch, no proactive speech. It waits silently for your command.
+#     (JARVIS_AUTO_GREETING=1 / JARVIS_PREWARM=full opt back in if wanted.)
+#
+# Smart-speed defaults (env-overridable, only affect reaction timing):
+#  - Tight endpointing (min 0.25s), preemptive generation, HIGH
+#    end-of-speech sensitivity, context-window compression.
+#
+# Power features:
+#  - Native-account browser control (CDP attach to your real Chrome/Edge).
+#  - jarvis_system: lock/shutdown/brightness/volume/processes/clipboard/
+#    run-commands/notes; jarvis_reminders: spoken reminders;
+#    browser_restart_native, browser_run_js, window_snap_tool.
+# ============================================================================
 import asyncio
 import os
 
@@ -59,38 +79,73 @@ load_dotenv()
 
 
 def build_realtime_llm():
-    """Gemini realtime model tuned for minimum first-word latency."""
+    """Build the Gemini realtime model from .env settings.
+
+    Philosophy: NOTHING is hard-blocked. By default Gemini runs with its
+    FULL native intelligence — thinking ON, model defaults everywhere.
+    Every knob below only applies when you explicitly set it in .env.
+    """
     kwargs = {
         "voice": os.getenv("JARVIS_VOICE", "Charon"),
-        "temperature": 0.7,
-        "proactivity": False,            # no unsolicited chatter, faster turns
-        "enable_affective_dialog": False,
+        # Proactivity OFF = Jarvis NEVER speaks or acts on its own;
+        # it waits for your command. (Set JARVIS_PROACTIVITY=1 to allow it.)
+        "proactivity": os.getenv("JARVIS_PROACTIVITY", "0") == "1",
     }
+
     model = (os.getenv("JARVIS_LLM_MODEL") or "").strip()
     if model:
         kwargs["model"] = model          # e.g. gemini-live-2.5-flash-native-audio
 
-    # Thinking OFF by default → seconds faster on every reply.
-    # Set JARVIS_THINKING_BUDGET=-1 to use the model default, or e.g. 512.
-    try:
-        budget = int(os.getenv("JARVIS_THINKING_BUDGET", "0"))
-    except ValueError:
-        budget = 0
-    if budget >= 0:
-        kwargs["thinking_config"] = genai_types.ThinkingConfig(
-            thinking_budget=budget,
-        )
+    # ── Gemini thinking: ON by default (full intelligence) ──
+    # Only applies if you explicitly set JARVIS_THINKING_BUDGET in .env:
+    #   0  → thinking off (max speed, less depth)
+    #   N  → cap thinking at N tokens (balanced)
+    #  -1 / unset → Gemini's own default (smart)
+    budget_raw = (os.getenv("JARVIS_THINKING_BUDGET") or "").strip()
+    if budget_raw:
+        try:
+            budget = int(budget_raw)
+        except ValueError:
+            budget = -1
+        if budget >= 0:
+            kwargs["thinking_config"] = genai_types.ThinkingConfig(
+                thinking_budget=budget,
+            )
 
-    # Fast, server-side speech endpoint detection
-    kwargs["realtime_input_config"] = genai_types.RealtimeInputConfig(
-        automatic_activity_detection=genai_types.AutomaticActivityDetection(
-            disabled=False,
-            start_of_speech_sensitivity=genai_types.StartSensitivity.START_SENSITIVITY_LOW,
-            end_of_speech_sensitivity=genai_types.EndSensitivity.END_SENSITIVITY_HIGH,
-            prefix_padding_ms=20,
-            silence_duration_ms=300,
-        ),
-    )
+    # ── Temperature: unset → Gemini's default ──
+    temp_raw = (os.getenv("JARVIS_TEMPERATURE") or "").strip()
+    if temp_raw:
+        try:
+            kwargs["temperature"] = float(temp_raw)
+        except ValueError:
+            pass
+
+    # ── How fast Jarvis reacts when you pause (env-tunable) ──
+    # Defaults below only shape reaction speed, never intelligence.
+    end_sens   = (os.getenv("JARVIS_END_SENSITIVITY") or "HIGH").strip().upper()
+    start_sens = (os.getenv("JARVIS_START_SENSITIVITY") or "LOW").strip().upper()
+    try:
+        silence_ms = int(os.getenv("JARVIS_SILENCE_MS", "300") or 300)
+        prefix_ms  = int(os.getenv("JARVIS_PREFIX_MS", "20") or 20)
+        kwargs["realtime_input_config"] = genai_types.RealtimeInputConfig(
+            automatic_activity_detection=genai_types.AutomaticActivityDetection(
+                disabled=False,
+                start_of_speech_sensitivity=(
+                    genai_types.StartSensitivity.START_SENSITIVITY_HIGH
+                    if start_sens == "HIGH"
+                    else genai_types.StartSensitivity.START_SENSITIVITY_LOW
+                ),
+                end_of_speech_sensitivity=(
+                    genai_types.EndSensitivity.END_SENSITIVITY_LOW
+                    if end_sens == "LOW"
+                    else genai_types.EndSensitivity.END_SENSITIVITY_HIGH
+                ),
+                prefix_padding_ms=prefix_ms,
+                silence_duration_ms=silence_ms,
+            ),
+        )
+    except Exception:
+        pass  # fall back to plugin/Gemini defaults
 
     # Long sessions stay fast (old context is compressed, not re-sent)
     try:
@@ -206,8 +261,13 @@ class Assistant(Agent):
         )
 
 
-async def _prewarm():
-    """Background warm-up: browser launch + app index + file index — all parallel."""
+async def _prewarm(browser: bool = False):
+    """Optional background warm-up.
+
+    Default: only SILENT index caching (app names + file index) — nothing
+    opens, nothing happens on screen. browser=True additionally pre-launches
+    the browser (a visible action), so it's strictly opt-in.
+    """
     tasks = []
     try:
         from Jarvis_window_CTRL import smart_index, discover_apps
@@ -215,11 +275,12 @@ async def _prewarm():
         tasks.append(smart_index())
     except Exception:
         pass
-    try:
-        from jarvis_browser import warmup as browser_warmup
-        tasks.append(browser_warmup())
-    except Exception:
-        pass
+    if browser:
+        try:
+            from jarvis_browser import warmup as browser_warmup
+            tasks.append(browser_warmup())
+        except Exception:
+            pass
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -227,12 +288,18 @@ async def _prewarm():
 async def entrypoint(ctx: agents.JobContext):
     ensure_temp()
 
+    def _env_float(name: str, default: float) -> float:
+        try:
+            return float(os.getenv(name, "") or default)
+        except ValueError:
+            return default
+
     session = AgentSession(
         llm=build_realtime_llm(),
-        # ── Latency tuning ──
-        min_endpointing_delay=0.25,     # default 0.5s → reacts twice as fast
-        max_endpointing_delay=4.0,      # don't wait forever for "more to come"
-        preemptive_generation=True,     # start generating while you finish speaking
+        # ── Reaction-speed knobs (env-overridable; these are just defaults) ──
+        min_endpointing_delay=_env_float("JARVIS_MIN_ENDPOINTING", 0.25),
+        max_endpointing_delay=_env_float("JARVIS_MAX_ENDPOINTING", 4.0),
+        preemptive_generation=os.getenv("JARVIS_PREEMPTIVE", "1") != "0",
     )
 
     await session.start(
@@ -246,21 +313,32 @@ async def entrypoint(ctx: agents.JobContext):
 
     await ctx.connect()
 
-    # Auto-clean temp folder every hour
+    # Auto-clean temp folder every hour (invisible housekeeping only)
     try:
         start_cleanup(interval_seconds=3600)
     except Exception:
         pass
 
-    # Fire-and-forget warm-up (zero cold-start on first command)
-    try:
-        asyncio.get_running_loop().create_task(_prewarm())
-    except Exception:
-        pass
+    # ── Prewarm — strictly limited, nothing visible happens by itself ──
+    #   JARVIS_PREWARM=index (default) → only silent cache building
+    #   JARVIS_PREWARM=full            → also pre-launches the browser
+    #   JARVIS_PREWARM=off             → do nothing at all
+    prewarm_mode = (os.getenv("JARVIS_PREWARM") or "index").strip().lower()
+    if prewarm_mode not in ("off", "0", "none"):
+        try:
+            asyncio.get_running_loop().create_task(
+                _prewarm(browser=prewarm_mode in ("full", "browser", "1"))
+            )
+        except Exception:
+            pass
 
-    await session.generate_reply(
-        instructions=Reply_prompts
-    )
+    # ── Jarvis stays SILENT until YOUR first command ──
+    # No startup greeting, no self-actions. Only with JARVIS_AUTO_GREETING=1
+    # will it introduce itself when you connect.
+    if os.getenv("JARVIS_AUTO_GREETING", "0") == "1":
+        await session.generate_reply(
+            instructions=Reply_prompts
+        )
 
 
 if __name__ == "__main__":

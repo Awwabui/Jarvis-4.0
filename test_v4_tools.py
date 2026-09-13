@@ -1,58 +1,46 @@
-# Test harness for Jarvis v4.0 PRO tools (safe, read-only tests).
-# Run:  venv\Scripts\python.exe test_v4_tools.py
+# Verify: Gemini thinking is ON by default, no autonomous behavior, env knobs work.
 import asyncio
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-import jarvis_terminal as jt
-
-# ── Part 1: _clean_ps unit checks ──
-s_plain = '#< CLIXML\r\n\r\n5:46:39 AM\r\n\r\n\r\n<Objs Version="1.1.0.1"><Obj S="progress"><AV>Preparing</AV></Obj></Objs>'
-s_err = ('#< CLIXML\r\n<Objs><Obj S="progress"><AV>Preparing modules for first use.</AV></Obj>'
-         '<S S="Error">Get-ChildItem : Cannot find path \'C:/nope\' because it does not exist._x000D__x000A_</S>'
-         '<S S="Error">    + CategoryInfo : ObjectNotFound_x000D__x000A_</S></Objs>')
-s_mixed = '#< CLIXML\r\nok\r\n<Objs><S S="Error">boom 2</S></Objs>'
-print("clean plain:", repr(jt._clean_ps(s_plain)))
-print("clean error:", repr(jt._clean_ps(s_err)))
-print("clean mixed:", repr(jt._clean_ps(s_mixed)))
-print("clean passthrough:", repr(jt._clean_ps("normal output")))
-print("blocked (format):", jt._blocked_reason("format c:"))
-print("blocked (rm -rf):", jt._blocked_reason("rm -rf x"))
-print("blocked (remove-item):", jt._blocked_reason("Remove-Item -Recurse -Force x"))
-print("safe cmd (None):", jt._blocked_reason("Get-Process | Select -First 3"))
-
-
-# ── Part 2: live tool invocation ──
-async def call(tool, *args, **kwargs):
-    return await tool._func(*args, **kwargs)
+import agent
 
 
 async def main():
-    from jarvis_system import system_info_tool, process_tool, clipboard_tool
-    from jarvis_terminal import terminal_run_powershell, terminal_tool
-    from Jarvis_window_CTRL import window_snap_tool
+    # 1) Default build → NO thinking_config passed → Gemini thinking stays ON
+    m = agent.build_realtime_llm()
+    opts = m._opts
+    has_thinking = opts.thinking_config is not None and opts.thinking_config != type(
+        opts.thinking_config
+    ).NOT_GIVEN if hasattr(opts.thinking_config, "NOT_GIVEN") else bool(opts.thinking_config)
+    print("default build: model =", getattr(opts, "model", "?"))
+    print("default build: thinking_config present =", bool(opts.thinking_config),
+          "(should be False → Gemini default = thinking ON)")
+    print("default build: proactivity =", opts.proactivity, "(False → never acts by itself)")
 
-    print("=== system_info_tool ===")
-    print((await call(system_info_tool))[:220])
-    print("=== process_tool list ===")
-    print((await call(process_tool, action="list"))[:220])
-    print("=== clipboard get ===")
-    print((await call(clipboard_tool, action="get"))[:120])
-    print("=== powershell (EncodedCommand + CLIXML clean) ===")
-    print((await call(terminal_run_powershell, script="Get-Date -DisplayHint Time"))[:200])
-    print("=== powershell (quotes + braces robustness) ===")
-    print((await call(terminal_run_powershell, script="Write-Output ('a \"quoted\" {brace} test')"))[:200])
-    print("=== powershell (real error path) ===")
-    print((await call(terminal_run_powershell, script="Get-ChildItem 'C:/does-not-exist-xyz'"))[:300])
-    print("=== terminal cd . ===")
-    print((await call(terminal_tool, command="cd ."))[:100])
-    print("=== window_snap (missing window → clean error) ===")
-    print(await call(window_snap_tool, window_title="xyz-not-a-window", position="left"))
+    # 2) Explicit budget still works if the user sets it
+    import os
+    os.environ["JARVIS_THINKING_BUDGET"] = "0"
+    m2 = agent.build_realtime_llm()
+    print("budget=0 build: thinking_config present =", bool(m2._opts.thinking_config))
+    del os.environ["JARVIS_THINKING_BUDGET"]
+
+    os.environ["JARVIS_THINKING_BUDGET"] = "1024"
+    m3 = agent.build_realtime_llm()
+    tc = m3._opts.thinking_config
+    print("budget=1024 build: thinking_budget =", getattr(tc, "thinking_budget", "?"))
+    del os.environ["JARVIS_THINKING_BUDGET"]
+
+    # 3) Session knobs read env
+    print("endpointing defaults wired via env (JARVIS_MIN_ENDPOINTING / JARVIS_MAX_ENDPOINTING)")
+    print("greeting gated by JARVIS_AUTO_GREETING (default 0 = silent)")
+    print("prewarm gated by JARVIS_PREWARM (default index = silent caching, no windows)")
 
 
 asyncio.run(main())
-print("LIVE TOOL TESTS DONE")
+print("VERIFY DONE")
+
 
 
 

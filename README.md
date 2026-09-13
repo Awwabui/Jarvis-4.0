@@ -13,7 +13,8 @@ Controls your PC: apps, windows, files, terminal, **your real browser
 
 | Area | Upgrade |
 |---|---|
-| **Speed** | Realtime thinking disabled (`JARVIS_THINKING_BUDGET=0`), tighter endpointing (0.25s), `preemptive_generation`, HIGH end-of-speech sensitivity, context-window compression → replies start in well under a second |
+| **Speed** | Tight endpointing (0.25s), `preemptive_generation`, HIGH end-of-speech sensitivity, context-window compression — **with FULL Gemini intelligence (thinking ON by default)** |
+| **Waits for you** | No startup greeting, no auto browser launch, no proactive speech — Jarvis does **nothing** until your command (all opt-in via `.env`) |
 | **Native browser** | Jarvis **attaches to your real Chrome/Edge via CDP** — your logged-in Gmail/YouTube/anything works. No more blank automation profile |
 | **Run commands** | `run_command_tool` — Win+R style (`msconfig`, `services.msc`, `ms-settings:*`, `shell:*`, URLs) |
 | **System control** | Lock / sleep / restart / shutdown (confirm-guarded), brightness, recycle bin, DNS flush |
@@ -82,9 +83,20 @@ and Jarvis controls your real browser instantly (zero launch delay).
 
 ## 🔧 Tuning (in `.env`)
 
+**Philosophy: nothing is hardcoded or disabled.** Unset = Gemini's own smart default. You only set what you want to change.
+
 | Variable | Default | Meaning |
 |---|---|---|
-| `JARVIS_THINKING_BUDGET` | `0` | 0 = fastest replies; -1 = model default |
+| `JARVIS_THINKING_BUDGET` | **unset → thinking ON** | `0` = off (fastest, less depth), `N` = cap tokens |
+| `JARVIS_TEMPERATURE` | unset (Gemini default) | Creativity 0.0–2.0 |
+| `JARVIS_AUTO_GREETING` | `0` | `1` = Jarvis introduces itself on connect |
+| `JARVIS_PREWARM` | `index` | Silent cache building only; `full` = also pre-launch browser; `off` = nothing |
+| `JARVIS_PROACTIVITY` | `0` | `1` allows unprompted speech |
+| `JARVIS_MIN_ENDPOINTING` | `0.25` | Seconds of silence before Jarvis reacts |
+| `JARVIS_MAX_ENDPOINTING` | `4.0` | Max wait for you to continue |
+| `JARVIS_SILENCE_MS` / `JARVIS_PREFIX_MS` | `300` / `20` | VAD timing |
+| `JARVIS_END_SENSITIVITY` / `JARVIS_START_SENSITIVITY` | `HIGH` / `LOW` | VAD sensitivity |
+| `JARVIS_PREEMPTIVE` | `1` | Generate while you finish speaking |
 | `JARVIS_LLM_MODEL` | (empty) | e.g. `gemini-3.1-flash-live-preview` |
 | `JARVIS_VOICE` | `Charon` | Any Gemini Live voice |
 | `JARVIS_CDP_PORT` | `9222` | Debug port for native browser attach |
