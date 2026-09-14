@@ -17,7 +17,9 @@ async def main():
     print("default build: model =", getattr(opts, "model", "?"))
     print("default build: thinking_config present =", bool(opts.thinking_config),
           "(should be False → Gemini default = thinking ON)")
-    print("default build: proactivity =", opts.proactivity, "(False → never acts by itself)")
+    print("default build: proactivity field NOT sent =", 
+          not getattr(opts, "proactivity", False),
+          "(True → no API 1007 'Unknown name proactivity' error possible)")
 
     # 2) Explicit budget still works if the user sets it
     import os

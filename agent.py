@@ -84,17 +84,27 @@ def build_realtime_llm():
     Philosophy: NOTHING is hard-blocked. By default Gemini runs with its
     FULL native intelligence — thinking ON, model defaults everywhere.
     Every knob below only applies when you explicitly set it in .env.
+
+    IMPORTANT: optional Live-API fields (like `proactivity`) are NOT sent
+    by default — some models reject unknown fields at setup with
+    "Unknown name ... Cannot find field" (API error 1007). Jarvis "waits
+    for your command" behaviour comes from structure (no startup greeting,
+    no proactive turns), not from that field.
     """
     kwargs = {
         "voice": os.getenv("JARVIS_VOICE", "Charon"),
-        # Proactivity OFF = Jarvis NEVER speaks or acts on its own;
-        # it waits for your command. (Set JARVIS_PROACTIVITY=1 to allow it.)
-        "proactivity": os.getenv("JARVIS_PROACTIVITY", "0") == "1",
     }
 
     model = (os.getenv("JARVIS_LLM_MODEL") or "").strip()
     if model:
         kwargs["model"] = model          # e.g. gemini-live-2.5-flash-native-audio
+
+    # Proactive speech: strictly opt-in AND model-dependent.
+    # Only sent when you set JARVIS_PROACTIVITY=1 — if your model doesn't
+    # support the field, unset it (default) and Jarvis still never speaks
+    # or acts on its own.
+    if os.getenv("JARVIS_PROACTIVITY", "0") == "1":
+        kwargs["proactivity"] = True
 
     # ── Gemini thinking: ON by default (full intelligence) ──
     # Only applies if you explicitly set JARVIS_THINKING_BUDGET in .env:
@@ -147,15 +157,17 @@ def build_realtime_llm():
     except Exception:
         pass  # fall back to plugin/Gemini defaults
 
-    # Long sessions stay fast (old context is compressed, not re-sent)
-    try:
-        kwargs["context_window_compression"] = (
-            genai_types.ContextWindowCompressionConfig(
-                sliding_window=genai_types.SlidingWindow(),
+    # Long sessions stay fast (old context is compressed, not re-sent).
+    # Disable with JARVIS_CONTEXT_COMPRESSION=0 if a model rejects it.
+    if os.getenv("JARVIS_CONTEXT_COMPRESSION", "1") != "0":
+        try:
+            kwargs["context_window_compression"] = (
+                genai_types.ContextWindowCompressionConfig(
+                    sliding_window=genai_types.SlidingWindow(),
+                )
             )
-        )
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     return google.beta.realtime.RealtimeModel(**kwargs)
 
