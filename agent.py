@@ -74,6 +74,15 @@ from jarvis_system import (
     run_command_tool, save_note_tool,
 )
 from jarvis_reminders import set_reminder_tool
+from vision.tools import (
+    get_screen_context_tool,
+    analyze_screen_tool,
+    take_screenshot_desktop_tool,
+)
+from vision.screen_watcher import (
+    start_watcher, stop_watcher, screen_awareness_enabled, log_status,
+)
+from vision import vision_agent
 
 load_dotenv()
 
@@ -269,6 +278,11 @@ class Assistant(Agent):
                 # ── Productivity ──────────────────────────────
                 set_reminder_tool,
                 save_note_tool,
+
+                # ── Screen awareness / vision ────────────────
+                get_screen_context_tool,
+                analyze_screen_tool,
+                take_screenshot_desktop_tool,
             ]
         )
 
@@ -297,8 +311,35 @@ async def _prewarm(browser: bool = False):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+async def _start_screen_awareness() -> None:
+    """Automatic screen awareness — starts with Jarvis, never blocks it.
+
+    Honors SCREEN_AWARENESS / SCREEN_WATCH_INTERVAL / VISION_MODEL (.env).
+    Jarvis starts normally even when vision is unconfigured or fails.
+    """
+    try:
+        if not screen_awareness_enabled():
+            log_status("Screen awareness disabled (SCREEN_AWARENESS=false).")
+            return
+        if not vision_agent.is_vision_configured():
+            log_status("Screen awareness unavailable: vision model is not configured.")
+            log_status("Continuing without screen awareness.")
+            return
+        w = start_watcher()
+        model = (os.getenv("VISION_MODEL") or "gemini-3.6-flash").strip()
+        log_status("Screen awareness enabled",
+                   f"(every {w.interval:g}s, model: {model})")
+    except Exception as e:
+        log_status("Screen awareness failed to start.",
+                   f"({e}) Continuing normal operation.")
+
+
 async def entrypoint(ctx: agents.JobContext):
     ensure_temp()
+
+    # ── Automatic screen awareness (background thread, never blocks).
+    #    Idempotent: no-op when already started by the __main__ launcher.
+    await _start_screen_awareness()
 
     def _env_float(name: str, default: float) -> float:
         try:
@@ -354,4 +395,40 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 if __name__ == "__main__":
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
+    # Bare `python agent.py` → behave like `python agent.py dev`
+    import sys
+    if len(sys.argv) == 1:
+        sys.argv.append("dev")
+
+    # ── Jarvis startup banner + automatic screen awareness ──
+    # Screen awareness runs at PROCESS level: active as soon as the process
+    # starts, shared by all jobs, stopped once on exit (Ctrl+C safe).
+    log_status("Initializing...")
+    log_status("AI system ready")
+    log_status("Voice system ready")
+    try:
+        if screen_awareness_enabled():
+            if vision_agent.is_vision_configured():
+                w = start_watcher()
+                model = (os.getenv("VISION_MODEL") or vision_agent.VISION_MODEL).strip()
+                log_status("Screen awareness enabled",
+                           f"(every {w.interval:g}s, model: {model})")
+            else:
+                log_status("Screen awareness unavailable: vision model is not configured.")
+                log_status("Continuing without screen awareness.")
+        else:
+            log_status("Screen awareness disabled (SCREEN_AWARENESS=false).")
+    except Exception as e:
+        log_status("Screen awareness failed to start.",
+                   f"({e}) Continuing normal operation.")
+    log_status("Jarvis is ready.")
+
+    try:
+        agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
+    finally:
+        # Clean shutdown: no orphaned watcher thread, no continued capture
+        try:
+            stop_watcher()
+            log_status("Screen awareness stopped.")
+        except Exception:
+            pass

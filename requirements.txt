@@ -22,3 +22,4 @@ pycaw
 comtypes
 Send2Trash
 google-genai
+Pillow

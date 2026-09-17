@@ -105,7 +105,9 @@ async def get_screen_size_tool() -> str:
 
 @function_tool
 async def take_screenshot_tool() -> str:
-    """فوری اسکرین شاٹ لیں اور temp folder میں محفوظ کریں۔"""
+    """عارضی (temp) screenshot لیں — صرف agent کے اندرونی/ڈیبگ استعمال کے لیے۔
+    User سے screenshot مانگے جانے پر اس کے بجائے take_screenshot_desktop_tool
+    استعمال کریں (وہ Desktop پر save کرتا ہے)۔"""
     try:
         from jarvis_temp import temp_path
         path = temp_path(f"screenshot_{int(time.time())}.png")
