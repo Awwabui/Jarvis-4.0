@@ -10,8 +10,12 @@
 import os
 import sys
 import time
+from typing import Any
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+# getattr: the stubs type stdout as TextIO, which has no `reconfigure`.
+_reconfigure = getattr(sys.stdout, "reconfigure", None)
+if callable(_reconfigure):
+    _reconfigure(encoding="utf-8", errors="replace")
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -42,7 +46,7 @@ if img is not None:
 
     from PIL import Image
     shifted = img.copy()
-    px = shifted.load()
+    px: Any = shifted.load()  # PixelAccess | None in the PIL stubs
     for x in range(0, img.width, 2):          # half the screen shifted
         for y in range(img.height):
             r, g, b = px[x, y]

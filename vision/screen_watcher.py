@@ -63,7 +63,7 @@ def log_status(reason: str, detail: str = "") -> None:
         pass
 
 
-def describe_change(prev, curr, threshold: float = None) -> tuple:
+def describe_change(prev, curr, threshold: float | None = None) -> tuple:
     """Lightweight change metrics between two downsampled grayscale frames.
 
     Returns (mean_diff, significant). Uses numpy (already a dependency).
@@ -90,7 +90,8 @@ def describe_change(prev, curr, threshold: float = None) -> tuple:
 class ScreenWatcher:
     """Background screen-awareness worker (daemon thread, fail-safe)."""
 
-    def __init__(self, interval: float = None, threshold: float = None):
+    def __init__(self, interval: float | None = None,
+                 threshold: float | None = None):
         self.interval = max(MIN_INTERVAL, interval if interval else
                             _env_float(ENV_WATCH_INTERVAL, DEFAULT_INTERVAL))
         self.threshold = threshold if threshold is not None else \

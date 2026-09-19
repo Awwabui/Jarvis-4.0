@@ -20,7 +20,11 @@ except ImportError:
     smart_search = None
     focus_window = None
 
-sys.stdout.reconfigure(encoding='utf-8')
+# getattr: the stubs type stdout as TextIO, which has no `reconfigure`
+# (it exists only on the real TextIOWrapper).
+_reconfigure = getattr(sys.stdout, "reconfigure", None)
+if callable(_reconfigure):
+    _reconfigure(encoding="utf-8")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

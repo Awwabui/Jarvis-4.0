@@ -20,6 +20,7 @@
 # ============================================================================
 import asyncio
 import os
+from typing import Any
 
 from dotenv import load_dotenv
 from google.genai import types as genai_types
@@ -39,6 +40,10 @@ from Jarvis_window_CTRL import (
     focus_window_tool, focus_browser_tool,
     get_active_window_tool,
     minimize_window_tool, maximize_window_tool,
+)
+from jarvis_launcher import (
+    smart_open, refresh_app_index_tool,
+    list_discovered_apps_tool, resolve_website_tool,
 )
 from Jarvis_file_opner import Play_file
 from keyboard_mouse_CTRL import (
@@ -74,10 +79,32 @@ from jarvis_system import (
     run_command_tool, save_note_tool,
 )
 from jarvis_reminders import set_reminder_tool
+from jarvis_safety import (
+    emergency_stop_tool, jarvis_continue_tool,
+    request_confirm_tool, confirm_action_tool,
+    recent_actions_tool, failed_actions_tool,
+)
+from jarvis_ui import (
+    ui_list_windows_tool, ui_list_controls_tool, ui_find_tool,
+    ui_click_tool, ui_type_tool, ui_get_text_tool, ui_wait_tool,
+)
+from jarvis_planner import (
+    create_plan_tool, get_plan_tool, complete_step_tool, abandon_plan_tool,
+)
+from jarvis_files import (
+    file_search_tool, file_copy_tool, file_move_tool,
+    file_delete_tool, file_mkdir_tool, recent_files_tool,
+)
+from jarvis_winops import (
+    windows_service_tool, process_manage_tool, registry_tool,
+    virtual_desktop_tool, network_info_tool, power_plan_tool,
+)
+from jarvis_notify import toast_notify_tool, clipboard_history_tool
 from vision.tools import (
     get_screen_context_tool,
     analyze_screen_tool,
     take_screenshot_desktop_tool,
+    ocr_screen_tool,
 )
 from vision.screen_watcher import (
     start_watcher, stop_watcher, screen_awareness_enabled, log_status,
@@ -100,7 +127,9 @@ def build_realtime_llm():
     for your command" behaviour comes from structure (no startup greeting,
     no proactive turns), not from that field.
     """
-    kwargs = {
+    # Any-valued: the realtime model accepts str/bool/float/config objects here
+    # (an inferred dict[str, str] made every later kwargs[...] line an error).
+    kwargs: dict[str, Any] = {
         "voice": os.getenv("JARVIS_VOICE", "Charon"),
     }
 
@@ -196,6 +225,15 @@ class Assistant(Agent):
                 close,
                 folder_file,
                 Play_file,
+
+                # ── v5: INTELLIGENT OPEN (primary launcher) ────
+                # Apps / games / websites / files — discovery-based,
+                # no hardcoded lists. smart_open is the single entry.
+                smart_open,
+                refresh_app_index_tool,
+                list_discovered_apps_tool,
+                resolve_website_tool,
+
                 focus_window_tool,
                 focus_browser_tool,
                 get_active_window_tool,
@@ -283,6 +321,51 @@ class Assistant(Agent):
                 get_screen_context_tool,
                 analyze_screen_tool,
                 take_screenshot_desktop_tool,
+                ocr_screen_tool,
+
+                # ── v4.1: UI Automation precision layer ──────
+                # (PREFER these over raw mouse coordinates!)
+                ui_list_windows_tool,
+                ui_list_controls_tool,
+                ui_find_tool,
+                ui_click_tool,
+                ui_type_tool,
+                ui_get_text_tool,
+                ui_wait_tool,
+
+                # ── v4.1: Planner / verifier / action memory ─
+                create_plan_tool,
+                get_plan_tool,
+                complete_step_tool,
+                abandon_plan_tool,
+
+                # ── v4.1: Safety / emergency stop ────────────
+                emergency_stop_tool,
+                jarvis_continue_tool,
+                request_confirm_tool,
+                confirm_action_tool,
+                recent_actions_tool,
+                failed_actions_tool,
+
+                # ── v4.1: Advanced files ─────────────────────
+                file_search_tool,
+                file_copy_tool,
+                file_move_tool,
+                file_delete_tool,
+                file_mkdir_tool,
+                recent_files_tool,
+
+                # ── v4.1: Deep Windows control ───────────────
+                windows_service_tool,
+                process_manage_tool,
+                registry_tool,
+                virtual_desktop_tool,
+                network_info_tool,
+                power_plan_tool,
+
+                # ── v4.1: Notifications + clips ──────────────
+                toast_notify_tool,
+                clipboard_history_tool,
             ]
         )
 
@@ -296,8 +379,10 @@ async def _prewarm(browser: bool = False):
     """
     tasks = []
     try:
-        from Jarvis_window_CTRL import smart_index, discover_apps
-        tasks.append(asyncio.to_thread(discover_apps))
+        from Jarvis_window_CTRL import smart_index
+        from jarvis_launcher import get_app_index
+        # v5: app/game discovery via jarvis_launcher (TTL-cached, 1h default)
+        tasks.append(get_app_index())
         tasks.append(smart_index())
     except Exception:
         pass

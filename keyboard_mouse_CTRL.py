@@ -126,7 +126,8 @@ async def take_screenshot_tool() -> str:
 
 
 @function_tool
-async def move_cursor_tool(direction: str, distance: int = 100, duration: float = None):
+async def move_cursor_tool(direction: str, distance: int = 100,
+                          duration: float | None = None):
     """ماؤس کو direction (left/right/up/down) میں منتقل کریں۔"""
     d = _MOVE_DURATION if duration is None else duration
     x, y = await _run(pyautogui.position)
@@ -140,7 +141,7 @@ async def move_cursor_tool(direction: str, distance: int = 100, duration: float 
 
 
 @function_tool
-async def move_cursor_to_tool(x: int, y: int, duration: float = None):
+async def move_cursor_to_tool(x: int, y: int, duration: float | None = None):
     """ماؤس کو مخصوص (x, y) کوآرڈینیٹ پر لے جائیں۔"""
     d = _MOVE_DURATION if duration is None else duration
     await _run(pyautogui.moveTo, x, y, d)

@@ -17,14 +17,20 @@ import asyncio
 import datetime
 import logging
 import os
+from typing import Any
 
 from livekit.agents import function_tool
 
 logger = logging.getLogger(__name__)
 
-try:
+try:  # console-safe output (cp1252 consoles choke on Urdu / emoji)
     import sys as _sys
-    _sys.stdout.reconfigure(encoding="utf-8")
+
+    # getattr: the stubs type stdout as TextIO, which has no `reconfigure`
+    # (it exists only on the real TextIOWrapper) — keeps type-checkers clean.
+    _reconfigure = getattr(_sys.stdout, "reconfigure", None)
+    if callable(_reconfigure):
+        _reconfigure(encoding="utf-8")
 except Exception:
     pass
 
@@ -185,9 +191,12 @@ async def set_volume_tool(percent: int) -> str:
         from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 
         def _set():
-            devices = AudioUtilities.GetSpeakers()
-            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-            vol = cast(interface, POINTER(IAudioEndpointVolume))
+            # pycaw/ctypes annotations are incomplete (Optional device +
+            # native _Pointer) — Any-typed locals keep the checker clean.
+            devices: Any = AudioUtilities.GetSpeakers()
+            interface: Any = devices.Activate(
+                IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            vol: Any = cast(interface, POINTER(IAudioEndpointVolume))
             old = int(round(vol.GetMasterVolumeLevelScalar() * 100))
             vol.SetMasterVolumeLevelScalar(pct / 100.0, None)
             muted = bool(vol.GetMute())

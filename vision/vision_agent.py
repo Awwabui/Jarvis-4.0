@@ -40,13 +40,15 @@ def is_vision_configured() -> bool:
 
 def _get_client():
     """Build a google-genai Client from the existing GOOGLE_API_KEY env."""
-    from google import genai as genai_client
+    # `from google.genai import Client` — the `from google import genai` form is
+    # not resolvable by type-checkers (google is a namespace package).
+    from google.genai import Client as GenaiClient
 
     api_key = (os.getenv("GOOGLE_API_KEY") or "").strip()
     if not api_key:
         raise VisionUnavailable("GOOGLE_API_KEY is not configured.")
     try:
-        return genai_client.Client(api_key=api_key)
+        return GenaiClient(api_key=api_key)
     except Exception as e:
         raise VisionUnavailable(f"Could not initialize vision client: {e}") from e
 

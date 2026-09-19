@@ -13,8 +13,12 @@ import sys
 
 # Console-safe output (cp1252 consoles choke on Urdu / emoji)
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    # getattr: the stubs type stdout/stderr as TextIO, which has no
+    # `reconfigure` (it exists only on the real TextIOWrapper).
+    for _stream in (sys.stdout, sys.stderr):
+        _reconfigure = getattr(_stream, "reconfigure", None)
+        if callable(_reconfigure):
+            _reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
 

@@ -17,10 +17,16 @@ import os
 import re
 import subprocess
 import time
+from typing import Any
 
 from livekit.agents import function_tool
 
 logger = logging.getLogger(__name__)
+
+# async_playwright: playwright's launcher, or None when playwright is missing.
+# Declared Any so the optional-dependency import + fallback assignment stays
+# type-checker clean (same convention as win32gui in Jarvis_window_CTRL.py).
+async_playwright: Any
 
 try:
     from playwright.async_api import async_playwright
@@ -30,37 +36,15 @@ except ImportError:
     _PLAYWRIGHT_AVAILABLE = False
 
 # ──────────────────────────────────────────────
-# Site aliases
+# Site resolution — v5: NO hardcoded alias list.
+# Names are resolved intelligently via jarvis_launcher (learned cache →
+# DNS-validated construction → web search). Only a tiny offline fallback
+# remains for the rare case DNS + search both fail.
 # ──────────────────────────────────────────────
-_SITE_ALIASES = {
-    "youtube": "https://www.youtube.com",
+_CORE_SITE_FALLBACKS = {
     "google": "https://www.google.com",
+    "youtube": "https://www.youtube.com",
     "gmail": "https://mail.google.com",
-    "mail": "https://mail.google.com",
-    "maps": "https://maps.google.com",
-    "google maps": "https://maps.google.com",
-    "drive": "https://drive.google.com",
-    "google drive": "https://drive.google.com",
-    "facebook": "https://www.facebook.com",
-    "instagram": "https://www.instagram.com",
-    "twitter": "https://x.com",
-    "x": "https://x.com",
-    "whatsapp": "https://web.whatsapp.com",
-    "linkedin": "https://www.linkedin.com",
-    "netflix": "https://www.netflix.com",
-    "amazon": "https://www.amazon.com",
-    "github": "https://github.com",
-    "stackoverflow": "https://stackoverflow.com",
-    "stack overflow": "https://stackoverflow.com",
-    "wikipedia": "https://www.wikipedia.org",
-    "reddit": "https://www.reddit.com",
-    "tiktok": "https://www.tiktok.com",
-    "chatgpt": "https://chatgpt.com",
-    "gemini": "https://gemini.google.com",
-    "twitch": "https://www.twitch.tv",
-    "pinterest": "https://www.pinterest.com",
-    "yahoo": "https://www.yahoo.com",
-    "bing": "https://www.bing.com",
 }
 
 _state = {
@@ -84,15 +68,26 @@ _PROC_CACHE = {"time": 0.0, "running": set()}
 # URL helpers
 # ──────────────────────────────────────────────
 def normalize_url(target: str) -> str:
+    """SYNC URL normalization (internal callers only).
+    v5: delegated to jarvis_launcher's intelligent resolver when possible
+    (learned cache → tiny fallback → generic construction)."""
     t = (target or "").strip()
     if not t:
         return "https://www.google.com"
     if t.lower().startswith(("http://", "https://")):
         return t
+    try:
+        from jarvis_launcher import resolve_website_sync
+        url, _how = resolve_website_sync(t)
+        if url:
+            rest = t.split("/", 1)[1] if "/" in t else ""
+            return f"{url}/{rest}" if rest else url
+    except Exception:
+        pass
     host = re.sub(r"^www\.", "", t.lower().split("/")[0])
     base = host.split(".")[0]
-    if base in _SITE_ALIASES:
-        url  = _SITE_ALIASES[base]
+    if base in _CORE_SITE_FALLBACKS:
+        url  = _CORE_SITE_FALLBACKS[base]
         rest = t.split("/", 1)[1] if "/" in t else ""
         return f"{url}/{rest}" if rest else url
     if "." in host:
@@ -330,7 +325,7 @@ async def _ensure_browser():
             except Exception:
                 continue
             for channel in _channels_for(label):
-                variant = {"channel": channel} if channel else {}
+                variant: dict[str, Any] = {"channel": channel} if channel else {}
                 try:
                     _state["pw"] = await async_playwright().start()
                     _state["context"] = await _state["pw"].chromium.launch_persistent_context(
@@ -379,7 +374,14 @@ async def warmup():
         logger.warning(f"براؤزر pre-warm ناکام (بعد میں retry): {e}")
 
 
-def _active_page():
+def _active_page() -> Any:
+    """Active playwright Page, or None when no tab is open.
+
+    Typed Any (playwright is an optional dependency): every tool starts with
+    `await _ensure_browser()`, which guarantees at least one live tab, so
+    callers use the result directly. The callers that can legitimately see
+    None (warmup, browser_get_current_url) still check `if not page`.
+    """
     return _state["pages"][_state["active"]] if _state["pages"] else None
 
 
@@ -477,8 +479,19 @@ async def open_url(url: str) -> str:
 
 @function_tool
 async def browser_open(url: str) -> str:
-    """کسی ویب سائٹ یا URL کو براؤزر میں کھولیں۔ سائٹ کا نام کافی ہے ('youtube', 'gmail')۔"""
-    return await open_url(url)
+    """کسی ویب سائٹ یا URL کو براؤزر میں کھولیں۔ سائٹ کا نام کافی ہے ('youtube', 'gmail',
+    'netflix')۔ v5: نام intelligently resolve ہوتا ہے — learned cache / DNS
+    validation / official-site search؛ کوئی hardcoded list نہیں۔"""
+    t = (url or "").strip()
+    if t and not t.lower().startswith(("http://", "https://")):
+        try:
+            from jarvis_launcher import resolve_website
+            resolved, _how = await resolve_website(t)
+            if resolved:
+                return await open_url(resolved)
+        except Exception:
+            pass
+    return await open_url(normalize_url(t))
 
 
 @function_tool

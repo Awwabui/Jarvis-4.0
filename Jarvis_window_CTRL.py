@@ -9,22 +9,53 @@ import time
 import re
 import string
 
+from typing import Any
+
+# ──────────────────────────────────────────────
+# Fuzzy-match backend — rapidfuzz preferred, fuzzywuzzy fallback.
+# _fuzzy_process is declared Any (module | None) so both import paths stay
+# type-checker clean, and a single non-duplicated helper wraps the backend
+# (rapidfuzz returns a 3-tuple, fuzzywuzzy a 2-tuple — both slice the same).
+# ──────────────────────────────────────────────
+_fuzzy_process: Any
+
 try:
-    from rapidfuzz import process as rfprocess
-    def _fuzzy_extract_one(query, choices):
-        r = rfprocess.extractOne(query, choices, score_cutoff=0)
-        return (r[0], r[1]) if r else (None, 0)
+    from rapidfuzz import process as _fuzzy_process
 except ImportError:
-    from fuzzywuzzy import process as fwprocess
-    def _fuzzy_extract_one(query, choices):
-        r = fwprocess.extractOne(query, choices)
-        return r if r else (None, 0)
+    try:
+        from fuzzywuzzy import process as _fuzzy_process
+    except ImportError:
+        _fuzzy_process = None
+
+
+def _fuzzy_extract_one(query, choices):
+    """Best fuzzy match → (choice, score); (None, 0) when nothing matches."""
+    if _fuzzy_process is None:
+        return None, 0
+    r = _fuzzy_process.extractOne(query, choices, score_cutoff=0)
+    return (r[0], r[1]) if r else (None, 0)
+
+
+# function_tool: livekit's decorator, or an identity passthrough when this
+# module runs outside the LiveKit agent process (tests). Declared Any so both
+# the overloaded livekit import and the fallback assignment type-check.
+function_tool: Any
 
 try:
     from livekit.agents import function_tool
-except ImportError:
-    def function_tool(func):
+except ImportError:  # tools used outside the LiveKit agent process (tests)
+    from typing import cast as _cast
+
+    def _passthrough_tool(func):
         return func
+
+    # cast(Any, …) keeps type-checkers happy against livekit's overloaded
+    # import signature while behaving as a plain identity decorator.
+    function_tool = _cast(Any, _passthrough_tool)
+
+win32gui: Any  # optional deps — None when pywin32 / pygetwindow missing
+win32con: Any
+gw: Any
 
 try:
     import win32gui
@@ -38,154 +69,51 @@ try:
 except ImportError:
     gw = None
 
-sys.stdout.reconfigure(encoding='utf-8')
+_reconfigure = getattr(sys.stdout, "reconfigure", None)
+if callable(_reconfigure):
+    _reconfigure(encoding="utf-8")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────
-# Fast-path app shortcuts (spoken-name → command)
+# v5 INTELLIGENT OPEN — no hardcoded lookup tables.
+# The old APP_MAPPINGS / KNOWN_SITES dictionaries are GONE. All opening now
+# goes through jarvis_launcher.smart_open_impl(), which uses REAL system
+# discovery (Start Menu / Program Files / Steam / Epic / Xbox / UWP) +
+# intelligent website resolution. resolve_app_command() below is kept only
+# as a thin backward-compatible shim for older callers.
 # ──────────────────────────────────────────────
-APP_MAPPINGS = {
-    "notepad": "notepad", "calculator": "calc", "calc": "calc",
-    "chrome": "chrome", "google chrome": "chrome",
-    "vlc": "vlc", "command prompt": "cmd", "cmd": "cmd",
-    "terminal": "wt", "control panel": "control",
-    "settings": "ms-settings:", "paint": "mspaint",
-    "vs code": r"%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe",
-    "code": r"%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe",
-    "postman": r"%LOCALAPPDATA%\Postman\Postman.exe",
-    "edge": "msedge", "firefox": "firefox", "spotify": "spotify",
-    "word": "winword", "excel": "excel", "powerpoint": "powerpnt",
-    "explorer": "explorer", "task manager": "taskmgr",
-    "camera": "microsoft.windows.camera:",
-    # v4 additions — UWP/protocol apps + common installs
-    "discord": "discord:", "teams": "msteams:", "zoom": "zoom:",
-    "whatsapp desktop": "whatsapp:", "slack": "slack:",
-    "snipping tool": "ms-screenclip:", "wordpad": "write",
-    "mail": "outlookmail:", "store": "ms-windows-store:",
-    "notifications": "ms-actioncenter:", "clipboard history": "ms-clipboard:",
-    "start menu": "ms-start:", "search": "ms-search:",
-    "bluetooth settings": "ms-settings:bluetooth",
-    "wifi settings": "ms-settings:network-wifi",
-    "display settings": "ms-settings:display",
-    "sound settings": "ms-settings:sound",
-    "battery settings": "ms-settings:batterysaver",
-    "apps installed": "ms-settings:appsfeatures",
-    "uninstall app": "ms-settings:appsfeatures",
-    "downloads": "%USERPROFILE%\\Downloads",
-    "documents": "%USERPROFILE%\\Documents",
-    "pictures": "%USERPROFILE%\\Pictures",
-    "desktop": "%USERPROFILE%\\Desktop",
-    "recycle bin": "shell:RecycleBinFolder",
-    "startup folder": "shell:startup",
-    "device manager": "devmgmt.msc",
-    "disk management": "diskmgmt.msc",
-    "services": "services.msc",
-    "registry editor": "regedit",
-    "network connections": "ncpa.cpl",
-    "programs and features": "appwiz.cpl",
-    "power options": "powercfg.cpl",
-    "date and time": "timedate.cpl",
-}
-
-KNOWN_SITES = {
-    "youtube": "https://www.youtube.com", "google": "https://www.google.com",
-    "gmail": "https://mail.google.com", "facebook": "https://www.facebook.com",
-    "instagram": "https://www.instagram.com", "twitter": "https://x.com",
-    "x": "https://x.com", "whatsapp": "https://web.whatsapp.com",
-    "linkedin": "https://www.linkedin.com", "netflix": "https://www.netflix.com",
-    "amazon": "https://www.amazon.com", "github": "https://github.com",
-    "wikipedia": "https://www.wikipedia.org", "reddit": "https://www.reddit.com",
-    "tiktok": "https://www.tiktok.com", "chatgpt": "https://chatgpt.com",
-}
 
 # ──────────────────────────────────────────────
-# App discovery — persistent JSON cache
+# App discovery — thin wrapper over jarvis_launcher (v5 primary system)
 # ──────────────────────────────────────────────
-_APP_CACHE = None
-_APP_CACHE_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "jarvis_temp", "app_cache.json"
-)
-
-
-def _load_app_cache_from_disk():
-    try:
-        if os.path.exists(_APP_CACHE_FILE):
-            age = time.time() - os.path.getmtime(_APP_CACHE_FILE)
-            if age < 86400:  # 24h — re-scan once a day
-                with open(_APP_CACHE_FILE, encoding="utf-8") as f:  # type: ignore[call-arg]
-                    return json.load(f)
-    except Exception:
-        pass
-    return None
-
-
-def _save_app_cache_to_disk(cache: dict):
-    try:
-        os.makedirs(os.path.dirname(_APP_CACHE_FILE), exist_ok=True)
-        with open(_APP_CACHE_FILE, "w", encoding="utf-8") as f:  # type: ignore[call-arg]
-            json.dump(cache, f, ensure_ascii=False)
-    except Exception:
-        pass
-
-
 def discover_apps():
-    """Dynamically build name → executable map by scanning install dirs.
-    Result is persisted to disk; re-scan only once per 24 hours."""
-    global _APP_CACHE
-    if _APP_CACHE is not None:
-        return _APP_CACHE
-
-    cached = _load_app_cache_from_disk()
-    if cached:
-        _APP_CACHE = cached
-        return _APP_CACHE
-
-    found = {}
-    search_roots = []
-    for base in [
-        os.path.expandvars("%ProgramFiles%"),
-        os.path.expandvars("%ProgramFiles(x86)%"),
-        os.path.expandvars(r"%LOCALAPPDATA%\Programs"),
-        os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs"),
-        os.path.expandvars(r"%ProgramData%\Microsoft\Windows\Start Menu\Programs"),
-    ]:
-        if base and os.path.isdir(base):
-            search_roots.append(base)
-
-    for root in search_roots:
-        for dirpath, _, files in os.walk(root):
-            for f in files:
-                lower = f.lower()
-                if lower.endswith(".exe") or lower.endswith(".lnk"):
-                    name = os.path.splitext(f)[0].lower()
-                    path = os.path.join(dirpath, f)
-                    if name not in found:
-                        found[name] = path
-
-    _APP_CACHE = found
-    _save_app_cache_to_disk(found)
-    return found
+    """Backward-compatible shim: name → launchable path/protocol map,
+    built from jarvis_launcher's REAL system discovery (cached, TTL-based)."""
+    from jarvis_launcher import scan_installed_apps_sync
+    return {e["name"]: e["launch"] for e in scan_installed_apps_sync()}
 
 
 def resolve_app_command(query: str) -> str:
-    """Resolve a spoken app name to a launchable command."""
-    if query in APP_MAPPINGS:
-        cmd = os.path.expandvars(APP_MAPPINGS[query])
-        if os.path.isabs(cmd) and not os.path.exists(cmd):
-            base = os.path.basename(cmd)
-            which = shutil.which(base) or shutil.which(os.path.splitext(base)[0])
-            return which or query
-        return cmd
+    """Backward-compatible shim: resolve a spoken app name to a launchable
+    command via dynamic discovery + the tiny Windows-protocol fallback."""
+    from jarvis_launcher import match_apps, scan_installed_apps_sync
+    q = (query or "").strip().lower()
+    if not q:
+        return query
 
-    apps = discover_apps()
-    if query in apps:
-        return apps[query]
+    # Primary: dynamic discovery (fuzzy + confidence policy)
+    try:
+        matches = match_apps(q, scan_installed_apps_sync())
+        if matches:
+            return matches[0][0]["launch"]
+    except Exception:
+        pass
 
-    if apps:
-        best, score = _fuzzy_extract_one(query, list(apps.keys()))
-        if best and score >= 75:
-            return apps[best]
+    # Emergency fallback: Windows built-in shell targets only
+    from jarvis_launcher import _EMERGENCY_PROTOCOLS, _expand
+    if q in _EMERGENCY_PROTOCOLS:
+        return _expand(_EMERGENCY_PROTOCOLS[q])
 
     return query  # let Windows App Paths / PATH resolve it
 
@@ -241,7 +169,7 @@ async def focus_window(title_keyword: str) -> bool:
     return False
 
 
-async def focus_browser(domain_hint: str = None) -> bool:
+async def focus_browser(domain_hint: str | None = None) -> bool:
     hints = []
     if domain_hint:
         hints.append(domain_hint.lower().replace("www.", ""))
@@ -306,7 +234,9 @@ async def smart_index():
     return item_index
 
 
-async def smart_search(query: str, prefer_type: str = None):
+async def smart_search(query: str, prefer_type: str | None = None, min_score: int = 75):
+    """File/folder smart search. min_score raises the fuzzy-match confidence
+    so a weak match never opens the wrong file (v5)."""
     index = await smart_index()
     if not index:
         return None
@@ -321,19 +251,19 @@ async def smart_search(query: str, prefer_type: str = None):
     if prefer_type == "folder":
         name, score = best_of("folder")
         target_type = "folder"
-        if score < 60:
+        if score < min_score:
             name2, score2 = best_of("file")
             if score2 > score:
                 name, score, target_type = name2, score2, "file"
     else:
         name, score = best_of("file")
         target_type = "file"
-        if score < 60:
+        if score < min_score:
             name2, score2 = best_of("folder")
             if score2 > score:
                 name, score, target_type = name2, score2, "folder"
 
-    if score < 60:
+    if score < min_score:
         return None
 
     for item in index:
@@ -417,41 +347,29 @@ async def _open_in_controlled_browser(url: str) -> str:
 # ──────────────────────────────────────────────
 @function_tool
 async def open(app_title: str) -> str:
-    """کوئی ایپ، فائل راستہ، یا ویب سائٹ کھولیں ('chrome', 'notepad', 'youtube', URL)۔"""
+    """کوئی ایپ، گیم، فائل راستہ، یا ویب سائٹ کھولیں ('chrome', 'gta 5',
+    'youtube', URL)۔ v5: یہ tool jarvis_launcher کی intelligent discovery سے
+    چلتا ہے — کوئی hardcoded list نہیں۔"""
+    try:
+        from jarvis_launcher import smart_open_impl
+        return await smart_open_impl(app_title)
+    except Exception as e:
+        logger.warning(f"smart_open failed, legacy path used: {e}")
+    # Legacy safety net (never the primary path)
     app_title = app_title.strip()
-    lowered   = app_title.lower()
-
+    lowered = app_title.lower()
     if lowered.startswith(("http://", "https://", "www.")):
         url = app_title if "://" in app_title else "https://" + app_title
         return await _open_in_controlled_browser(url)
-
-    if lowered in KNOWN_SITES:
-        return await _open_in_controlled_browser(KNOWN_SITES[lowered])
-
     if os.path.exists(app_title):
         os.startfile(app_title)
         await focus_window(os.path.basename(app_title))
         return f"✅ کھولا: {app_title}"
-
     command = await asyncio.to_thread(resolve_app_command, lowered)
-
-    if command.lower().startswith(("http", "ms-", "shell:", "file:")) or command.endswith(":"):
-        try:
-            os.startfile(command)
-            domain = command.split("//")[-1].split("/")[0] if "://" in command else None
-            await (focus_browser(domain) if domain else focus_window(command))
-            return f"🚀 کھولا: {app_title}"
-        except Exception as e:
-            return f"❌ {app_title} نہیں کھل سکا: {e}"
-
     try:
         proc = await asyncio.create_subprocess_shell(f'start "" "{command}"')
         await proc.wait()
-        if proc.returncode != 0:
-            return f"❌ {app_title} لانچ ناکام (cmd: {command})"
-        focused = await focus_window(lowered)
-        return (f"🚀 {app_title} لانچ + فوکس ہے۔" if focused
-                else f"🚀 {app_title} لانچ ہوئی (فوکس نہ ہو سکا)۔")
+        return f"🚀 {app_title} لانچ ہوئی۔"
     except Exception as e:
         return f"❌ {app_title} لانچ ناکام: {e}"
 

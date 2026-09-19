@@ -2,6 +2,8 @@ import os
 import asyncio
 import logging
 import time
+from typing import Any
+
 from dotenv import load_dotenv
 from livekit.agents import function_tool
 
@@ -15,7 +17,7 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────
 _WEATHER_CACHE: dict = {}          # city.lower() → (timestamp, result_str)
 _WEATHER_TTL   = 600               # 10 minutes — weather doesn't change faster
-_CITY_CACHE    = {"city": None}    # session-lifetime IP→city cache
+_CITY_CACHE: dict[str, Any] = {"city": None}   # session-lifetime IP→city cache
 
 
 async def _detect_city_by_ip() -> str:

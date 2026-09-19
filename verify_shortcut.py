@@ -2,8 +2,10 @@
 import os
 import sys
 
-try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+try:  # getattr: TextIO has no `reconfigure` in the stubs
+    _reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if callable(_reconfigure):
+        _reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
 

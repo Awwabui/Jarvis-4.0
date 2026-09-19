@@ -23,3 +23,6 @@ comtypes
 Send2Trash
 google-genai
 Pillow
+pywinauto
+winotify
+pytesseract

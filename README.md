@@ -1,5 +1,40 @@
 # Jarvis 4.0 — Voice AI Assistant with Screen Awareness
 
+## v5 — Intelligent Open System (new)
+
+Saying **"Open GTA 5" / "Open VS Code" / "Open Netflix" / "open that racing game"**
+now works through **real system discovery + reasoning**, not lookup tables.
+
+- `jarvis_launcher.py` scans Start Menu, Program Files (×2), LocalAppData,
+  Desktop, **Steam libraries, Epic manifests, Xbox (GamingRoots), UWP/Store apps**
+  and caches results in `jarvis_cache/app_index.json`
+  (TTL: `JARVIS_APP_CACHE_TTL` seconds, default 1h; auto-refreshed at startup).
+- **`smart_open`** is the single entry point for ANY target (app / game /
+  website / file / folder). It decides the type itself, launches Steam games
+  via `steam://rungameid`, Epic/Xbox games via their real exes, and asks the
+  user only when a match is truly ambiguous.
+- **No hardcoded site list**: names are resolved via a learned-sites cache →
+  DNS+HTTP-validated URL construction → official-site web search
+  (`resolve_website_tool` resolves without opening).
+- **Launch memory**: every launch is recorded, so *"the game I played
+  yesterday"* / *"آخری گیم کھولو"* reopens the last game.
+- Helper tools: `refresh_app_index_tool` (after installing something new),
+  `list_discovered_apps_tool` (what's installed).
+- `open`, `discover_apps`, `browser_open` and browser URL normalization now
+  delegate to this engine — the old `APP_MAPPINGS`, `KNOWN_SITES` and
+  `_SITE_ALIASES` dictionaries are gone (only a tiny Windows-protocol /
+  offline fallback remains).
+
+Validate without launching anything:
+
+```bash
+venv\Scripts\python.exe test_launcher.py       # discovery + matching + sites
+venv\Scripts\python.exe test_launcher.py --full  # force a fresh system rescan
+```
+
+Voice AI assistant (LiveKit + Gemini realtime) for Windows with
+**automatic screen awareness**, explicit screenshots, browser/system/terminal
+control, reminders and more.
 Voice-based AI assistant (LiveKit + Gemini realtime) for Windows with
 **automatic screen awareness**, explicit screenshots, browser/system/terminal
 control, reminders and more.

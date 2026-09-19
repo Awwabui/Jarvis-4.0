@@ -58,3 +58,25 @@ async def take_screenshot_desktop_tool() -> str:
         return f"📸 Screenshot saved to your Desktop as: {path}"
     except Exception as e:
         return f"❌ I couldn't save the screenshot to your Desktop. ({e})"
+
+
+# ──────────────────────────────────────────────
+# OCR — optional (Tesseract). UIA (jarvis_ui.py) pehle try karein;
+# ye tab jab text UIA tree me na ho (image-based UI, games, PDFs).
+# ──────────────────────────────────────────────
+@function_tool
+async def ocr_screen_tool(question: str = "") -> str:
+    """اسکرین کا سارا نظر آنے والا متن OCR سے پڑھیں — جب UI Automation
+    (ui_get_text_tool) متن نہ دے (image-based UI، PDF، game، scanned page)۔
+    Tesseract نصب نہ ہو تو بتائے گا کہ یہ feature optional ہے۔
+    question اختیاری ہے — صرف رپورٹ کے سرخی میں آتا ہے۔"""
+    from vision import ocr
+    if not ocr.is_ocr_available():
+        return ("⚠ OCR دستیاب نہیں — Tesseract نصب نہیں ہے۔ "
+                "تنصیب: `winget install UB-Mannheim.TesseractOCR` "
+                "(یا .env میں TESSERACT_CMD سیٹ کریں)۔ اس کے بجائے "
+                "analyze_screen_tool (vision AI) استعمال کریں۔")
+    try:
+        return await asyncio.to_thread(ocr.ocr_screen, question or "")
+    except Exception as e:
+        return f"❌ OCR ناکام: {e}"

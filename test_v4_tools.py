@@ -2,7 +2,10 @@
 import asyncio
 import sys
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+# getattr: the stubs type stdout as TextIO, which has no `reconfigure`.
+_reconfigure = getattr(sys.stdout, "reconfigure", None)
+if callable(_reconfigure):
+    _reconfigure(encoding="utf-8", errors="replace")
 
 import agent
 
@@ -11,9 +14,12 @@ async def main():
     # 1) Default build → NO thinking_config passed → Gemini thinking stays ON
     m = agent.build_realtime_llm()
     opts = m._opts
-    has_thinking = opts.thinking_config is not None and opts.thinking_config != type(
-        opts.thinking_config
-    ).NOT_GIVEN if hasattr(opts.thinking_config, "NOT_GIVEN") else bool(opts.thinking_config)
+    # livekit marks "argument not supplied" with its own NOT_GIVEN sentinel
+    # (the previous type(tc).NOT_GIVEN probe never matched a real attribute,
+    # so has_thinking was always truthy). This is the correct check.
+    from livekit.agents.types import NOT_GIVEN as _NOT_GIVEN
+
+    has_thinking = opts.thinking_config is not _NOT_GIVEN
     print("default build: model =", getattr(opts, "model", "?"))
     print("default build: thinking_config present =", bool(opts.thinking_config),
           "(should be False → Gemini default = thinking ON)")

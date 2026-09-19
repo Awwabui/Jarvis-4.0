@@ -61,8 +61,12 @@ from livekit import rtc
 logger = logging.getLogger(__name__)
 
 try:  # console-safe output (cp1252 consoles choke on Urdu / emoji)
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    # getattr: the stubs type stdout/stderr as TextIO, which has no
+    # `reconfigure` (it exists only on the real TextIOWrapper).
+    for _stream in (sys.stdout, sys.stderr):
+        _reconfigure = getattr(_stream, "reconfigure", None)
+        if callable(_reconfigure):
+            _reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
 
@@ -895,7 +899,10 @@ class _LocalSession:
         except Exception:
             attrs = {}
         try:
-            is_agent = int(kind) == int(rtc.ParticipantKind.KIND_AGENT)
+            # proto enum naming is PARTICIPANT_KIND_AGENT (the old KIND_AGENT
+            # never existed → the check always raised and fell through).
+            _kind_agent = getattr(rtc.ParticipantKind, "PARTICIPANT_KIND_AGENT", None)
+            is_agent = _kind_agent is not None and int(kind) == int(_kind_agent)
         except Exception:
             is_agent = False
         if not is_agent and (ATTRIBUTE_AGENT_STATE in attrs or identity.startswith("agent-")):
